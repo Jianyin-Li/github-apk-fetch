@@ -19,6 +19,8 @@ UA_MOBILE = (
 
 PAGES = [
     ("uptodown-app", "https://github-com.en.uptodown.com/android", UA),
+    ("uptodown-download", "https://github-com.en.uptodown.com/android/download", UA),
+    ("uptodown-download-slash", "https://github-com.en.uptodown.com/android/download/", UA),
     ("uptodown-versions", "https://github-com.en.uptodown.com/android/versions", UA),
     ("apkcombo-search", f"https://apkcombo.com/search/{PKG}", UA),
     ("apkpure-mobile", f"https://m.apkpure.com/github/{PKG}", UA_MOBILE),
@@ -48,7 +50,7 @@ def main() -> None:
         for link in links[:40]:
             print(f"  {link[:190]}")
         print(f"  -- {len(links)} interesting links, page {len(body)} bytes")
-        if name == "uptodown-app":
+        if name.startswith("uptodown"):
             after = re.search(r"data-url=[\"']([^\"']+)[\"']", body)
             print(f"  data-url: {after.group(1)[:190] if after else 'none'}")
 
