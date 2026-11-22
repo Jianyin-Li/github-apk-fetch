@@ -342,7 +342,7 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
         "kind": "html",
         "headers": desktop,
         "urls": combo_urls,
-        "follow": r"/(?:download|apk|{})".format(re.escape(pkg)),
+        "follow": r"/{}".format(re.escape(pkg)),
         "max_pages": 6,
         "max_files": 2,
     })
@@ -351,8 +351,8 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
         "name": "uptodown",
         "kind": "html",
         "headers": desktop,
-        "urls": [f"https://{candidate}-com.en.uptodown.com/android" for candidate in slugs]
-                + [f"https://en.uptodown.com/android/search?q={pkg}"],
+        "urls": [f"https://{candidate}.en.uptodown.com/android" for candidate in slugs]
+                + [f"https://en.uptodown.com/search?q={pkg}"],
         "follow": r"/(?:android|download)/\d+",
         "max_pages": 6,
         "max_files": 2,
@@ -379,7 +379,7 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
             f"https://www.apkmonk.com/app/{pkg}/",
             f"https://www.apkmonk.com/search/?q={pkg}",
         ],
-        "follow": r"/(?:app|download)/",
+        "follow": r"/{}".format(re.escape(pkg)),
         "max_pages": 4,
         "max_files": 1,
     })
@@ -392,7 +392,7 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
             f"https://apksos.com/app/{pkg}",
             f"https://apksos.com/search?q={pkg}",
         ],
-        "follow": r"/(?:app|download)/",
+        "follow": r"/{}".format(re.escape(pkg)),
         "max_pages": 4,
         "max_files": 1,
     })
@@ -405,7 +405,7 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
             f"https://apk.support/app/{pkg}",
             f"https://apk.support/search?q={pkg}",
         ],
-        "follow": r"/(?:app|download)/",
+        "follow": r"/{}".format(re.escape(pkg)),
         "max_pages": 4,
         "max_files": 1,
     })
@@ -418,7 +418,7 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
             f"https://www.androidfreeware.net/search.php?q={pkg}",
             f"https://www.androidfreeware.net/download-{slug}-apk.html",
         ],
-        "follow": r"/(?:download|search)",
+        "follow": r"/{}".format(re.escape(pkg)),
         "max_pages": 4,
         "max_files": 1,
     })
@@ -431,7 +431,7 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
             f"https://apkfab.com/search?q={pkg}",
             f"https://apkfab.com/{slug}/apk",
         ],
-        "follow": r"/(?:apk|download)/",
+        "follow": r"/{}".format(re.escape(pkg)),
         "max_pages": 4,
         "max_files": 1,
     })

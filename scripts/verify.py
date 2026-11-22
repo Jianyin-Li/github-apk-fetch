@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """Verify downloaded APK / XAPK / APKS / APKM / APKX containers.
 
-Policy (as requested):
+Policy:
   * verification is best effort: if the tooling cannot run, the file is still
     publishable but marked "unverified" in the release notes;
   * a file whose signature was actually checked and does not match, and any
     file whose package name does not match, is rejected and never published.
+
+Signer certificates are read from `apksigner --print-certs` first, then from
+the APK Signing Block (v2/v3) with a small pure-Python parser, then from
+`keytool -printcert -jarfile` for v1-only packages. That keeps fingerprint
+pinning working even when the build-tools output format changes.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import zipfile
@@ -26,7 +33,13 @@ SDK_RE = re.compile(r"(?:sdkVersion|minSdkVersion):'(\d+)'")
 TARGET_RE = re.compile(r"targetSdkVersion:'(\d+)'")
 CERT_RE = re.compile(r"Signer #\d+ certificate SHA-256 digest:\s*([0-9a-fA-F:]+)")
 SCHEME_RE = re.compile(r"Verified using (v\d) scheme[^:]*:\s*(true|false)")
+KEYTOOL_RE = re.compile(r"SHA256:\s*([0-9A-Fa-f:]+)")
 BUNDLE_EXTS = {"xapk", "apks", "apkm", "apkx", "zip"}
+
+SIG_BLOCK_MAGIC = b"APK Sig Block 42"
+V2_BLOCK_ID = 0x7109871A
+V3_BLOCK_ID = 0xF05368C0
+V31_BLOCK_ID = 0x1B93AD61
 
 
 class Unverifiable(Exception):
@@ -77,11 +90,72 @@ def _run(command: list[str], timeout: float = 300.0) -> tuple[int, str, str]:
     return completed.returncode, completed.stdout, completed.stderr
 
 
+def _u32(data: bytes, offset: int) -> int:
+    return struct.unpack_from("<I", data, offset)[0]
+
+
+def _length_prefixed(data: bytes, offset: int) -> tuple[bytes, int]:
+    length = _u32(data, offset)
+    start = offset + 4
+    return data[start:start + length], start + length
+
+
+def _certs_from_signing_block(path: str) -> list[str]:
+    """Extract signer certificate digests from the APK Signing Block (v2/v3)."""
+    with open(path, "rb") as handle:
+        payload = handle.read()
+    end_of_central = payload.rfind(b"PK\x05\x06")
+    if end_of_central < 0:
+        return []
+    central_offset = _u32(payload, end_of_central + 16)
+    if central_offset < 32 or payload[central_offset - 16:central_offset] != SIG_BLOCK_MAGIC:
+        return []
+    block_size = struct.unpack_from("<Q", payload, central_offset - 24)[0]
+    block_start = central_offset - block_size - 8
+    if block_start < 0:
+        return []
+    cursor = block_start + 8
+    pairs_end = central_offset - 24
+
+    certs: list[str] = []
+    while cursor + 12 <= pairs_end:
+        pair_length = struct.unpack_from("<Q", payload, cursor)[0]
+        pair_id = _u32(payload, cursor + 8)
+        value_start = cursor + 12
+        value_end = cursor + 8 + pair_length
+        if pair_length < 4 or value_end > pairs_end:
+            break
+        if pair_id in (V2_BLOCK_ID, V3_BLOCK_ID, V31_BLOCK_ID):
+            try:
+                signer_block, _ = _length_prefixed(payload[:value_end], value_start)
+                signed_data, _ = _length_prefixed(signer_block, 0)
+                _digests, offset = _length_prefixed(signed_data, 0)
+                certificates, _ = _length_prefixed(signed_data, offset)
+                certificate, _ = _length_prefixed(certificates, 0)
+            except struct.error:
+                pass
+            else:
+                certs.append(hashlib.sha256(certificate).hexdigest())
+        cursor = value_end
+    return sorted(set(certs))
+
+
+def _certs_from_keytool(path: str) -> list[str]:
+    if not shutil.which("keytool"):
+        return []
+    code, out, _err = _run(["keytool", "-printcert", "-jarfile", path])
+    if code != 0:
+        return []
+    return sorted({normalize_cert(match) for match in KEYTOOL_RE.findall(out)})
+
+
 def _apksigner_report(path: str, tools: dict) -> dict:
     if not tools:
         raise Unverifiable("Android build-tools unavailable")
     code, out, err = _run([tools["apksigner"], "verify", "--verbose", "--print-certs", path])
     combined = f"{out}\n{err}"
+    if os.environ.get("DEBUG_VERIFY"):
+        log(f"    apksigner rc={code}\n{combined}")
     if code != 0:
         lowered = combined.lower()
         tool_markers = (
@@ -93,11 +167,15 @@ def _apksigner_report(path: str, tools: dict) -> dict:
         )
         if any(marker in lowered for marker in tool_markers):
             raise Unverifiable(f"apksigner could not run: {combined.strip()[:300]}")
-        detail = combined.strip().replace("\n", " ")[:300]
-        raise Rejected(f"apksigner rejected the signature: {detail}")
+        raise Rejected(f"apksigner rejected the signature: {combined.strip()[:300]}")
+
     certs = sorted({normalize_cert(match) for match in CERT_RE.findall(out)})
     if not certs:
-        raise Unverifiable("apksigner reported no signer certificate")
+        certs = _certs_from_signing_block(path)
+    if not certs:
+        certs = _certs_from_keytool(path)
+    if not certs:
+        raise Unverifiable("apksigner verified the APK but no signer certificate was found")
     schemes = sorted({scheme for scheme, ok in SCHEME_RE.findall(out) if ok == "true"})
     return {"certs": certs, "schemes": schemes}
 
@@ -128,8 +206,19 @@ def _badging(path: str, tools: dict) -> dict:
 
 
 def _verify_single_apk(path: str, tools: dict) -> dict:
-    info = _badging(path, tools)
-    info.update(_apksigner_report(path, tools))
+    info: dict = {}
+    problems: list[str] = []
+    try:
+        info.update(_badging(path, tools))
+    except Unverifiable as exc:
+        problems.append(str(exc))
+    try:
+        info.update(_apksigner_report(path, tools))
+    except Unverifiable as exc:
+        problems.append(str(exc))
+    if not info.get("package") and not info.get("certs"):
+        raise Unverifiable("; ".join(problems) or "nothing could be verified")
+    info["problems"] = problems
     return info
 
 
@@ -197,15 +286,16 @@ def verify_file(path: str, expected_package: str, tools: dict | None) -> dict:
                 raise Rejected("container holds no APK payload")
             result["container"] = kind
 
+            bundle = {}
             if kind == "apk":
                 members = [(path, "")]
             else:
                 tempdir = tempfile.mkdtemp(prefix="apk-bundle-")
-                manifest = _bundle_manifest(zf)
+                bundle = _bundle_manifest(zf)
                 extracted = _extract_members(zf, inner, tempdir)
                 members = [(member, os.path.basename(member)) for member in extracted]
                 result["split_count"] = max(0, len(members) - 1)
-                bundle_package = manifest.get("package_name") or manifest.get("package")
+                bundle_package = bundle.get("package_name") or bundle.get("package")
                 if bundle_package and bundle_package != expected_package:
                     raise Rejected(
                         f"bundle manifest says {bundle_package}, expected {expected_package}"
@@ -232,30 +322,46 @@ def verify_file(path: str, expected_package: str, tools: dict | None) -> dict:
         if not infos:
             raise Unverifiable("; ".join(soft_errors) or "nothing could be verified")
 
-        packages = {info["package"] for info in infos}
-        if packages != {expected_package}:
-            raise Rejected(f"package is {', '.join(sorted(packages))}, expected {expected_package}")
+        packages = {info["package"] for info in infos if info.get("package")}
+        if packages and packages != {expected_package}:
+            raise Rejected(
+                f"package is {', '.join(sorted(packages))}, expected {expected_package}"
+            )
 
-        cert_sets = {tuple(info["certs"]) for info in infos}
+        certs = sorted({cert for info in infos for cert in info.get("certs", [])})
+        cert_sets = {tuple(sorted(info["certs"])) for info in infos if info.get("certs")}
         if len(cert_sets) > 1:
             raise Rejected("bundle members are signed with different keys")
 
         bases = [info for info in infos if not info.get("split")] or infos
-        base = max(bases, key=lambda info: _version_key(info["version_code"] or "0"))
+        base = max(bases, key=lambda info: _version_key(info.get("version_code") or "0"))
+
         result.update({
-            "package": base["package"],
-            "version_code": base["version_code"],
-            "version_name": base["version_name"],
-            "min_sdk": base["min_sdk"],
-            "target_sdk": base["target_sdk"],
-            "certs": base["certs"],
-            "schemes": sorted({scheme for info in infos for scheme in info["schemes"]}),
-            "verified": True,
-            "publishable": True,
-            "verdict": "verified",
+            "package": base.get("package") or bundle.get("package_name"),
+            "version_code": base.get("version_code") or bundle.get("version_code"),
+            "version_name": base.get("version_name") or bundle.get("version_name"),
+            "min_sdk": base.get("min_sdk"),
+            "target_sdk": base.get("target_sdk"),
+            "certs": certs,
+            "schemes": sorted({scheme for info in infos for scheme in info.get("schemes", [])}),
         })
-        if soft_errors:
-            result["error"] = "partially verified: " + "; ".join(soft_errors)[:300]
+
+        incomplete = bool(soft_errors) or not certs or packages != {expected_package}
+        if incomplete:
+            result.update({
+                "verified": False,
+                "publishable": True,
+                "verdict": "unverified",
+                "error": ("only partially verified: "
+                          + "; ".join(soft_errors or ["missing package/certificate info"]))[:400],
+            })
+        else:
+            result.update({
+                "verified": True,
+                "publishable": True,
+                "verdict": "verified",
+                "error": None,
+            })
     except Rejected as exc:
         result.update({"verdict": "rejected", "publishable": False, "verified": False,
                        "error": str(exc)})
