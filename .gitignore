@@ -1,0 +1,6 @@
+downloads/
+publish/
+*.apk
+*.xapk
+*.apks
+__pycache__/

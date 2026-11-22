@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Create the release for the staged APKs. The tag is created by this script,
+# never by hand.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ ! -f publish/release.env ]; then
+  echo "no verified APK staged, skipping release"
+  exit 0
+fi
+
+set -a
+# shellcheck disable=SC1091
+. publish/release.env
+set +a
+
+if gh release view "$TAG" >/dev/null 2>&1; then
+  TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
+  echo "tag already exists, using $TAG"
+fi
+
+shopt -s nullglob
+assets=(publish/*.apk publish/*.xapk publish/*.apks publish/*.apkm publish/*.apkx publish/*.zip)
+if [ ${#assets[@]} -eq 0 ]; then
+  echo "no APK assets found, skipping release"
+  exit 0
+fi
+
+gh release create "$TAG" "${assets[@]}" \
+  --target "$GITHUB_SHA" \
+  --title "$TITLE" \
+  --notes-file publish/release-notes.md \
+  --latest
+
+echo "published release $TAG"

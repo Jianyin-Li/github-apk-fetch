@@ -1,0 +1,74 @@
+name: Fetch APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package name to fetch
+        required: false
+        default: com.github.android
+      sources:
+        description: Comma separated source allowlist (empty means all)
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-apk
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tooling
+        run: |
+          set -euo pipefail
+          python3 --version
+          echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}"
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          ls "$sdk_root/build-tools" 2>/dev/null || true
+          java -version 2>&1 | head -2
+
+      - name: Fetch and verify
+        env:
+          APP_PACKAGE: ${{ inputs.package || 'com.github.android' }}
+          APP_SLUG: github
+          SOURCES: ${{ inputs.sources }}
+          EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
+          EXTRA_SOURCE_URLS: ${{ vars.EXTRA_SOURCE_URLS }}
+          FETCH_BUDGET: "1500"
+          FETCH_WORKERS: "6"
+        run: python3 scripts/main.py
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-fetch-${{ github.run_number }}
+          path: |
+            publish/
+            downloads/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Publish release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish.sh
+
+      - name: Notify ntfy
+        if: always()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          JOB_STATUS: ${{ job.status }}
+        run: bash scripts/notify.sh
