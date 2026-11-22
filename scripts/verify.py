@@ -31,7 +31,8 @@ PACKAGE_RE = re.compile(
 )
 SDK_RE = re.compile(r"(?:sdkVersion|minSdkVersion):'(\d+)'")
 TARGET_RE = re.compile(r"targetSdkVersion:'(\d+)'")
-CERT_RE = re.compile(r"Signer #\d+ certificate SHA-256 digest:\s*([0-9a-fA-F:]+)")
+CERT_RE = re.compile(r"certificate SHA-256 digest:\s*([0-9a-fA-F:]+)")
+DN_RE = re.compile(r"certificate DN:\s*(.+)")
 SCHEME_RE = re.compile(r"Verified using (v\d) scheme[^:]*:\s*(true|false)")
 KEYTOOL_RE = re.compile(r"SHA256:\s*([0-9A-Fa-f:]+)")
 BUNDLE_EXTS = {"xapk", "apks", "apkm", "apkx", "zip"}
@@ -177,7 +178,8 @@ def _apksigner_report(path: str, tools: dict) -> dict:
     if not certs:
         raise Unverifiable("apksigner verified the APK but no signer certificate was found")
     schemes = sorted({scheme for scheme, ok in SCHEME_RE.findall(out) if ok == "true"})
-    return {"certs": certs, "schemes": schemes}
+    subjects = [match.strip() for match in DN_RE.findall(out)]
+    return {"certs": certs, "schemes": schemes, "cert_subjects": subjects}
 
 
 def _badging(path: str, tools: dict) -> dict:
@@ -270,6 +272,7 @@ def verify_file(path: str, expected_package: str, tools: dict | None) -> dict:
         "target_sdk": None,
         "certs": [],
         "schemes": [],
+        "cert_subjects": [],
         "split_count": 0,
         "verified": False,
         "publishable": False,
@@ -344,6 +347,8 @@ def verify_file(path: str, expected_package: str, tools: dict | None) -> dict:
             "target_sdk": base.get("target_sdk"),
             "certs": certs,
             "schemes": sorted({scheme for info in infos for scheme in info.get("schemes", [])}),
+            "cert_subjects": sorted({subject for info in infos
+                                     for subject in info.get("cert_subjects", [])}),
         })
 
         incomplete = bool(soft_errors) or not certs or packages != {expected_package}

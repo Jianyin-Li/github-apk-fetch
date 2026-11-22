@@ -243,6 +243,8 @@ def main() -> int:
             f"{os.path.basename(item['path'])[:48]:48} "
             f"v{result['version_name'] or '?'} ({result['version_code'] or '?'}) cert={cert}"
             + (f" :: {result['error']}" if result["error"] else ""))
+        if result["cert_subjects"]:
+            log(f"           signer DN: {result['cert_subjects'][0]}")
 
     chosen, reason = choose(entries, pinned)
     log(f"decision: {reason}")

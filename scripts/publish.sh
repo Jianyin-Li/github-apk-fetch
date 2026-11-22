@@ -15,15 +15,28 @@ set -a
 . publish/release.env
 set +a
 
-if gh release view "$TAG" >/dev/null 2>&1; then
-  TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
-  echo "tag already exists, using $TAG"
-fi
-
 shopt -s nullglob
 assets=(publish/*.apk publish/*.xapk publish/*.apks publish/*.apkm publish/*.apkx publish/*.zip)
 if [ ${#assets[@]} -eq 0 ]; then
   echo "no APK assets found, skipping release"
+  exit 0
+fi
+
+if gh release view "$TAG" >/dev/null 2>&1; then
+  echo "release $TAG already exists for this version"
+  existing=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+  new=0
+  for asset in "${assets[@]}"; do
+    name=$(basename "$asset")
+    if grep -qxF "$name" <<<"$existing"; then
+      echo "  already published: $name"
+    else
+      gh release upload "$TAG" "$asset" --clobber
+      echo "  uploaded: $name"
+      new=$((new + 1))
+    fi
+  done
+  [ "$new" -eq 0 ] && echo "nothing new for $TAG"
   exit 0
 fi
 
