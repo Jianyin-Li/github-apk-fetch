@@ -48,6 +48,8 @@ jobs:
           SOURCES: ${{ inputs.sources }}
           EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
           EXTRA_SOURCE_URLS: ${{ vars.EXTRA_SOURCE_URLS }}
+          GPLAY_EMAIL: ${{ secrets.GPLAY_EMAIL }}
+          GPLAY_AAS_TOKEN: ${{ secrets.GPLAY_AAS_TOKEN }}
           DEBUG_VERIFY: ${{ inputs.debug && '1' || '' }}
           FETCH_BUDGET: "1500"
           FETCH_WORKERS: "6"

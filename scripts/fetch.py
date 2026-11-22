@@ -292,162 +292,50 @@ def _slugs(pkg: str, slug: str) -> list[str]:
 
 
 def build_sources(pkg: str, slug: str) -> list[dict]:
+    """Sources that are actually reachable from GitHub-hosted runners.
+
+    Everything else (APKMirror, APKCombo, Uptodown, apkfab, ...) answers 403 or
+    sits behind Cloudflare Turnstile, so it is not worth a request per run.
+    """
     mobile = headers_for(UA_MOBILE)
     desktop = headers_for(UA_DESKTOP)
-    slugs = _slugs(pkg, slug)
-    sources: list[dict] = []
+    referer = {"Referer": "https://apkpure.com/"}
 
-    # Split-required apps cannot be installed from a bare base APK
-    # (INSTALL_FAILED_MISSING_SPLIT), so the bundle is fetched as its own
-    # source and preferred by the publish decision.
-    sources.append({
+    sources: list[dict] = [{
         "name": "apkpure-xapk",
         "kind": "file",
-        "headers": {**mobile, "Referer": "https://apkpure.com/"},
+        "headers": {**mobile, **referer},
         "urls": [
             f"https://d.apkpure.com/b/XAPK/{pkg}?version=latest",
             f"https://d.apkpure.net/b/XAPK/{pkg}?version=latest",
+            f"https://d.cdnpure.com/b/XAPK/{pkg}?version=latest",
         ],
         "max_files": 1,
-    })
-
-    sources.append({
+    }, {
+        # Bare App Bundle base. Usually not installable alone, but kept as a
+        # cross-check of the bundle and as a fallback for non-split apps.
         "name": "apkpure-apk",
         "kind": "file",
-        "headers": {**mobile, "Referer": "https://apkpure.com/"},
+        "headers": {**mobile, **referer},
         "urls": [
             f"https://d.apkpure.com/b/APK/{pkg}?version=latest",
             f"https://d.apkpure.net/b/APK/{pkg}?version=latest",
         ],
         "max_files": 1,
-    })
-
-    sources.append({
-        "name": "apkpure-api",
-        "kind": "json",
-        "headers": {**mobile, "Referer": "https://apkpure.com/"},
-        "urls": [
-            f"https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name={pkg}",
-        ],
-        "max_files": 1,
-    })
-
-    web_urls: list[str] = [f"https://apkpure.com/search?q={pkg}"]
-    for candidate in slugs:
-        web_urls.append(f"https://apkpure.com/{candidate}/{pkg}/versions")
-        web_urls.append(f"https://apkpure.com/{candidate}/{pkg}/download")
-    sources.append({
-        "name": "apkpure-web",
+    }, {
+        # The desktop site is Cloudflare-blocked; the mobile site still serves
+        # version pages that can expose direct download links.
+        "name": "apkpure-mobile",
         "kind": "html",
-        "headers": {**desktop, "Referer": "https://apkpure.com/"},
-        "urls": web_urls,
-        "follow": r"/(?:versions?|download|{})".format(re.escape(pkg)),
-        "max_pages": 6,
+        "headers": mobile,
+        "urls": [
+            f"https://m.apkpure.com/{slug}/{pkg}",
+            f"https://m.apkpure.com/{slug}/{pkg}/versions",
+        ],
+        "follow": r"/{}".format(re.escape(pkg)),
+        "max_pages": 4,
         "max_files": 2,
-    })
-
-    combo_urls: list[str] = [f"https://apkcombo.com/search/{pkg}"]
-    for candidate in slugs:
-        combo_urls.append(f"https://apkcombo.com/{candidate}/{pkg}/download/apk")
-        combo_urls.append(f"https://apkcombo.com/{candidate}/{pkg}/")
-    sources.append({
-        "name": "apkcombo",
-        "kind": "html",
-        "headers": desktop,
-        "urls": combo_urls,
-        "follow": r"/{}".format(re.escape(pkg)),
-        "max_pages": 6,
-        "max_files": 2,
-    })
-
-    sources.append({
-        "name": "uptodown",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [f"https://{candidate}.en.uptodown.com/android" for candidate in slugs]
-                + [f"https://en.uptodown.com/search?q={pkg}"],
-        "follow": r"/(?:android|download)/\d+",
-        "max_pages": 6,
-        "max_files": 2,
-    })
-
-    sources.append({
-        "name": "apkmirror",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [
-            "https://www.apkmirror.com/apk/github/github/",
-            f"https://www.apkmirror.com/?post_type=app_release&searchtype=apk&s={pkg}",
-        ],
-        "follow": r"/apk/.+/(?:download|release)/",
-        "max_pages": 4,
-        "max_files": 1,
-    })
-
-    sources.append({
-        "name": "apkmonk",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [
-            f"https://www.apkmonk.com/app/{pkg}/",
-            f"https://www.apkmonk.com/search/?q={pkg}",
-        ],
-        "follow": r"/{}".format(re.escape(pkg)),
-        "max_pages": 4,
-        "max_files": 1,
-    })
-
-    sources.append({
-        "name": "apksos",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [
-            f"https://apksos.com/app/{pkg}",
-            f"https://apksos.com/search?q={pkg}",
-        ],
-        "follow": r"/{}".format(re.escape(pkg)),
-        "max_pages": 4,
-        "max_files": 1,
-    })
-
-    sources.append({
-        "name": "apk-support",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [
-            f"https://apk.support/app/{pkg}",
-            f"https://apk.support/search?q={pkg}",
-        ],
-        "follow": r"/{}".format(re.escape(pkg)),
-        "max_pages": 4,
-        "max_files": 1,
-    })
-
-    sources.append({
-        "name": "androidfreeware",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [
-            f"https://www.androidfreeware.net/search.php?q={pkg}",
-            f"https://www.androidfreeware.net/download-{slug}-apk.html",
-        ],
-        "follow": r"/{}".format(re.escape(pkg)),
-        "max_pages": 4,
-        "max_files": 1,
-    })
-
-    sources.append({
-        "name": "apkfab",
-        "kind": "html",
-        "headers": desktop,
-        "urls": [
-            f"https://apkfab.com/search?q={pkg}",
-            f"https://apkfab.com/{slug}/apk",
-        ],
-        "follow": r"/{}".format(re.escape(pkg)),
-        "max_pages": 4,
-        "max_files": 1,
-    })
+    }]
 
     extra = [u.strip() for u in re.split(r"[\s,]+", os.environ.get("EXTRA_SOURCE_URLS", ""))
              if u.strip()]
@@ -466,18 +354,30 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
 def fetch_all(pkg: str, slug: str, dest_root: str, only: str = "",
               budget: float = 600.0, workers: int = 6) -> list[dict]:
     sources = build_sources(pkg, slug)
-    if only:
-        wanted = {item.strip() for item in only.split(",") if item.strip()}
+    wanted = {item.strip() for item in only.split(",") if item.strip()} if only else set()
+    if wanted:
         sources = [src for src in sources if src["name"] in wanted]
-    if not sources:
+
+    google_play = None
+    if (not wanted or "google-play" in wanted) and os.environ.get("GPLAY_EMAIL") \
+            and os.environ.get("GPLAY_AAS_TOKEN"):
+        import gplay
+        google_play = gplay
+
+    if not sources and not google_play:
         log("no sources selected")
         return []
 
-    log(f"sources: {', '.join(src['name'] for src in sources)}")
+    log(f"sources: {', '.join(src['name'] for src in sources)}"
+        + (", google-play" if google_play else ""))
     deadline = time.time() + budget
     found: list[dict] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(crawl_source, src, dest_root, deadline): src for src in sources}
+        if google_play:
+            futures[pool.submit(google_play.fetch, pkg,
+                                os.path.join(dest_root, "google-play"), deadline)] = \
+                {"name": "google-play"}
         for future in as_completed(futures):
             src = futures[future]
             try:
