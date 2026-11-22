@@ -28,7 +28,14 @@
    - 未配置：verified 的按多源**签名共识**取舍，`UNVERIFIED` 的一并发布并标注，
      Release 说明会提示去固定指纹
 4. **发布**：按 `v<versionName>-<versionCode>` 创建 tag 和 Release，附上所有通过校验的
-   APK（文件名带来源，含 SHA-256 表）；tag 重复时自动加 `-r<run_number>`。
+   安装包（文件名带来源，含 SHA-256 表）。同一版本已存在时不重复发版，只补新资产。
+
+### 关于 `INSTALL_FAILED_MISSING_SPLIT`
+
+`com.github.android` 在 Play 上以 App Bundle 分发，`/b/APK/` 直链给出的是 **base APK**，
+单独安装会报 `INSTALL_FAILED_MISSING_SPLIT`。所以 CI 会把 `XAPK` 整包作为独立源拉取，
+校验后优先发布 XAPK；同版本存在整包时，缺 split 的裸 base 会被剔除。安装 XAPK 用
+SAI（Split APKs Installer）或 APKPure 客户端。
 
 定时任务每天 03:17 UTC 跑一次，也可以手动触发。
 
@@ -40,6 +47,10 @@
 ```sh
 gh variable set EXPECTED_CERT_SHA256 --repo Jianyin-Li/github-apk-fetch --body '<sha256>'
 ```
+
+> 只固定 **APK 签名证书**（`apksigner` 输出里的 `V2/V3 Signer` 或 `Signer #1`）。
+> build-tools 37 还会打印 `Source Stamp Signer`，那是 Google Play 的来源戳，
+> 不是应用签名键，CI 已经显式跳过。
 
 ## 可选 Secrets
 
