@@ -79,6 +79,10 @@ ENDPOINTS = [
     ("apkfollow", f"https://apkfollow.com/{SLUG}/", desktop()),
     ("apksfull", f"https://apksfull.com/{SLUG}/{PKG}", desktop()),
     ("apkaward", f"https://apkaward.com/apk/{PKG}", desktop()),
+    # Aptoide public API
+    ("aptoide-getapp", f"https://ws75.aptoide.com/api/7/getApp/package_name={PKG}", desktop()),
+    ("aptoide-search", f"https://ws75.aptoide.com/api/7/apps/search/query={PKG}/limit=3", desktop()),
+    ("aptoide-getapp-alt", f"https://ws2.aptoide.com/api/7/getApp/package_name={PKG}", desktop()),
     # stores / meta
     ("f-droid-api", f"https://f-droid.org/api/v1/packages/{PKG}", desktop()),
     ("izzysoft-api", f"https://apt.izzysoft.de/fdroid/api/v1/packages/{PKG}", desktop()),
