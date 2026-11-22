@@ -130,6 +130,36 @@ def choose(entries: list[dict], pinned: set[str]) -> tuple[list[dict], str]:
     )
 
 
+def prune_uninstallable(chosen: list[dict]) -> list[dict]:
+    """Drop split-required base APKs when a full bundle exists for the version.
+
+    A bare base APK of an App Bundle fails with INSTALL_FAILED_MISSING_SPLIT;
+    the bundle (xapk/apks/apkm) carries the config splits and is installable.
+    """
+    bundle_versions = {
+        str(entry["version_code"])
+        for entry in chosen
+        if entry["container"] != "apk" and entry["version_code"]
+    }
+    kept: list[dict] = []
+    for entry in chosen:
+        if (entry["container"] == "apk" and entry.get("split_required")
+                and str(entry["version_code"]) in bundle_versions):
+            drop(entry, "split-required base APK without config splits; "
+                        "the bundle for this version is published instead")
+            continue
+        kept.append(entry)
+    return kept
+
+
+def install_state(entry: dict) -> str:
+    if entry["container"] != "apk":
+        return "bundle (SAI / APKPure)"
+    if entry.get("split_required"):
+        return "**base only**"
+    return "apk"
+
+
 def asset_name(package: str, entry: dict) -> str:
     extension = EXTENSIONS.get(entry["container"], ".apk")
     version = safe_filename(entry["version_name"] or "unknown")
@@ -159,18 +189,19 @@ def write_notes(path: str, entries: list[dict], all_entries: list[dict], reason:
         "",
         f"Verification policy: {reason}",
         "",
-        "| Asset | Source | Version | Code | Signature | Signer SHA-256 | File SHA-256 |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Asset | Source | Version | Code | Signature | Install | Signer SHA-256 | File SHA-256 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for entry in entries:
         signature = "verified" if entry["verified"] else "**UNVERIFIED**"
         lines.append(
-            "| `{}` | {} | {} | {} | {} | `{}` | `{}` |".format(
+            "| `{}` | {} | {} | {} | {} | {} | `{}` | `{}` |".format(
                 asset_name(package, entry),
                 entry["source"],
                 entry["version_name"] or "?",
                 entry["version_code"] or "?",
                 signature,
+                install_state(entry),
                 ", ".join(entry["certs"]) or "-",
                 entry["sha256"],
             )
@@ -179,6 +210,11 @@ def write_notes(path: str, entries: list[dict], all_entries: list[dict], reason:
         "",
         "`UNVERIFIED` means the signature check could not be completed in CI; "
         "install at your own risk.",
+        "",
+        "`bundle` assets (`.xapk`, `.apks`, `.apkm`) contain the base APK plus the "
+        "config splits; install them with Split APKs Installer (SAI) or APKPure. "
+        "A plain `.apk` marked `**base only**` is the base of an App Bundle and "
+        "will fail with `INSTALL_FAILED_MISSING_SPLIT` on its own.",
         "",
         f"Workflow run: #{os.environ.get('GITHUB_RUN_NUMBER', '?')}",
         "",
@@ -248,6 +284,11 @@ def main() -> int:
 
     chosen, reason = choose(entries, pinned)
     log(f"decision: {reason}")
+    before = {entry["sha256"] for entry in chosen}
+    chosen = prune_uninstallable(chosen)
+    for entry in entries:
+        if entry["sha256"] in before and entry["sha256"] not in {e["sha256"] for e in chosen}:
+            log(f"pruned {os.path.basename(entry['path'])}: {entry['error']}")
 
     staged: list[dict] = []
     for entry in dedupe(chosen):

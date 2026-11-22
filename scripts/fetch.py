@@ -297,14 +297,27 @@ def build_sources(pkg: str, slug: str) -> list[dict]:
     slugs = _slugs(pkg, slug)
     sources: list[dict] = []
 
+    # Split-required apps cannot be installed from a bare base APK
+    # (INSTALL_FAILED_MISSING_SPLIT), so the bundle is fetched as its own
+    # source and preferred by the publish decision.
     sources.append({
-        "name": "apkpure-direct",
+        "name": "apkpure-xapk",
+        "kind": "file",
+        "headers": {**mobile, "Referer": "https://apkpure.com/"},
+        "urls": [
+            f"https://d.apkpure.com/b/XAPK/{pkg}?version=latest",
+            f"https://d.apkpure.net/b/XAPK/{pkg}?version=latest",
+        ],
+        "max_files": 1,
+    })
+
+    sources.append({
+        "name": "apkpure-apk",
         "kind": "file",
         "headers": {**mobile, "Referer": "https://apkpure.com/"},
         "urls": [
             f"https://d.apkpure.com/b/APK/{pkg}?version=latest",
             f"https://d.apkpure.net/b/APK/{pkg}?version=latest",
-            f"https://d.apkpure.com/b/XAPK/{pkg}?version=latest",
         ],
         "max_files": 1,
     })

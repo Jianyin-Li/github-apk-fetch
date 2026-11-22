@@ -31,8 +31,12 @@ PACKAGE_RE = re.compile(
 )
 SDK_RE = re.compile(r"(?:sdkVersion|minSdkVersion):'(\d+)'")
 TARGET_RE = re.compile(r"targetSdkVersion:'(\d+)'")
-CERT_RE = re.compile(r"certificate SHA-256 digest:\s*([0-9a-fA-F:]+)")
-DN_RE = re.compile(r"certificate DN:\s*(.+)")
+CERT_FIELD = "certificate SHA-256 digest:"
+DN_FIELD = "certificate DN:"
+# "Signer #1 certificate SHA-256 digest:" (build-tools <= 36)
+# "V3.0 Signer: certificate SHA-256 digest:"  (build-tools 37+)
+# "Source Stamp Signer: ..." is Play's source stamp, never the app key.
+SIGNER_HINT = "Signer"
 SCHEME_RE = re.compile(r"Verified using (v\d) scheme[^:]*:\s*(true|false)")
 KEYTOOL_RE = re.compile(r"SHA256:\s*([0-9A-Fa-f:]+)")
 BUNDLE_EXTS = {"xapk", "apks", "apkm", "apkx", "zip"}
@@ -170,16 +174,39 @@ def _apksigner_report(path: str, tools: dict) -> dict:
             raise Unverifiable(f"apksigner could not run: {combined.strip()[:300]}")
         raise Rejected(f"apksigner rejected the signature: {combined.strip()[:300]}")
 
-    certs = sorted({normalize_cert(match) for match in CERT_RE.findall(out)})
+    certs: set[str] = set()
+    subjects: list[str] = []
+    for line in out.splitlines():
+        if "Source Stamp" in line:
+            continue
+        if SIGNER_HINT in line and CERT_FIELD in line:
+            certs.add(normalize_cert(line.split(CERT_FIELD, 1)[1]))
+        elif SIGNER_HINT in line and DN_FIELD in line:
+            subjects.append(line.split(DN_FIELD, 1)[1].strip())
     if not certs:
-        certs = _certs_from_signing_block(path)
+        certs = set(_certs_from_signing_block(path))
     if not certs:
-        certs = _certs_from_keytool(path)
+        certs = set(_certs_from_keytool(path))
     if not certs:
         raise Unverifiable("apksigner verified the APK but no signer certificate was found")
     schemes = sorted({scheme for scheme, ok in SCHEME_RE.findall(out) if ok == "true"})
-    subjects = [match.strip() for match in DN_RE.findall(out)]
-    return {"certs": certs, "schemes": schemes, "cert_subjects": subjects}
+    return {"certs": sorted(certs), "schemes": schemes, "cert_subjects": subjects}
+
+
+def _split_required(path: str, tools: dict) -> bool | None:
+    """Whether the manifest demands config splits to install."""
+    if not tools:
+        return None
+    code, out, _err = _run([tools["aapt2"], "dump", "xmltree",
+                            "--file", "AndroidManifest.xml", path])
+    if code != 0:
+        return None
+    for line in out.splitlines():
+        if "isSplitRequired" in line:
+            return "0xffffffff" in line.lower()
+        if "requiredSplitTypes" in line:
+            return True
+    return False
 
 
 def _badging(path: str, tools: dict) -> dict:
@@ -218,6 +245,7 @@ def _verify_single_apk(path: str, tools: dict) -> dict:
         info.update(_apksigner_report(path, tools))
     except Unverifiable as exc:
         problems.append(str(exc))
+    info["split_required"] = _split_required(path, tools)
     if not info.get("package") and not info.get("certs"):
         raise Unverifiable("; ".join(problems) or "nothing could be verified")
     info["problems"] = problems
@@ -273,6 +301,7 @@ def verify_file(path: str, expected_package: str, tools: dict | None) -> dict:
         "certs": [],
         "schemes": [],
         "cert_subjects": [],
+        "split_required": None,
         "split_count": 0,
         "verified": False,
         "publishable": False,
@@ -349,6 +378,7 @@ def verify_file(path: str, expected_package: str, tools: dict | None) -> dict:
             "schemes": sorted({scheme for info in infos for scheme in info.get("schemes", [])}),
             "cert_subjects": sorted({subject for info in infos
                                      for subject in info.get("cert_subjects", [])}),
+            "split_required": base.get("split_required"),
         })
 
         incomplete = bool(soft_errors) or not certs or packages != {expected_package}
