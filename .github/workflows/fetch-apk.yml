@@ -11,6 +11,10 @@ on:
         description: Comma separated source allowlist (empty means all)
         required: false
         default: ""
+      debug:
+        description: Dump apksigner output
+        type: boolean
+        default: false
   schedule:
     - cron: "17 3 * * *"
 
@@ -44,6 +48,7 @@ jobs:
           SOURCES: ${{ inputs.sources }}
           EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
           EXTRA_SOURCE_URLS: ${{ vars.EXTRA_SOURCE_URLS }}
+          DEBUG_VERIFY: ${{ inputs.debug && '1' || '' }}
           FETCH_BUDGET: "1500"
           FETCH_WORKERS: "6"
         run: python3 scripts/main.py
