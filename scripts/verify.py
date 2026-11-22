@@ -105,6 +105,22 @@ def _length_prefixed(data: bytes, offset: int) -> tuple[bytes, int]:
     return data[start:start + length], start + length
 
 
+def _valid_cert_digest(der: bytes) -> str | None:
+    """Hash a DER certificate only if openssl confirms it is a real X.509 cert."""
+    if not der:
+        return None
+    try:
+        completed = subprocess.run(
+            ["openssl", "x509", "-inform", "DER", "-noout"],
+            input=der, capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return hashlib.sha256(der).hexdigest()
+    if completed.returncode != 0:
+        return None
+    return hashlib.sha256(der).hexdigest()
+
+
 def _certs_from_signing_block(path: str) -> list[str]:
     """Extract signer certificate digests from the APK Signing Block (v2/v3)."""
     with open(path, "rb") as handle:
@@ -140,7 +156,9 @@ def _certs_from_signing_block(path: str) -> list[str]:
             except struct.error:
                 pass
             else:
-                certs.append(hashlib.sha256(certificate).hexdigest())
+                digest = _valid_cert_digest(certificate)
+                if digest:
+                    certs.append(digest)
         cursor = value_end
     return sorted(set(certs))
 
