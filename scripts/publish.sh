@@ -24,6 +24,7 @@ fi
 
 if gh release view "$TAG" >/dev/null 2>&1; then
   echo "release $TAG already exists for this version"
+  gh release edit "$TAG" --title "$TITLE" --notes-file publish/release-notes.md
   existing=$(gh release view "$TAG" --json assets --jq '.assets[].name')
   new=0
   for asset in "${assets[@]}"; do
